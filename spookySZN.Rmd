@@ -1,0 +1,399 @@
+---
+title: "Horror Movie Analysis"
+author: "Sebastian Hernandez"
+date: "10/27/24"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+##FKF
+
+This template is a simple way to jump right into your analysis. The libraries included are most of my used libraries and will get you started with tidy data, ggplot, and more!
+
+```{r Libraries}
+library(tidyr)
+library(ggplot2)
+library(ggimage)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(stringr)
+library(forcats)
+library(quanteda)
+library("quanteda.textplots")
+library("quanteda.textstats")
+library(extrafont)
+library(wordcloud)
+library(tidytext)
+library(knitr)
+```
+
+The data used in this data set was pulled from the IMDb website with a web scraper I created using python. I looked up B-Horror movies genre by the most popular and pulled the top 100 titles at the time. However, popularity changes over time and thus so will the titles that get pulled from the web scarper. Therefore popularity is not focused on in this analysis.
+
+Let's take a look at what was pulled.
+
+```{r Data Import}
+
+horror <- read_csv('spookySZN_clean.csv')
+horror
+
+```
+
+This section focuses on some manipulation I did to the data frame to help with my analysis.
+
+```{r Data Manipulation}
+
+#Want to change the data type of runTime to runTime in minutes. 
+#First I will remove the 1h from the character string. 
+#I will have to save this into our data frame before trying to parse out "m"
+horror <- horror %>% 
+  mutate(runTimeMins =str_remove(horror$RunTime, "1h "))
+
+#parse out the "m" character
+horror <- horror %>% 
+  mutate(runTimeMins = str_remove(horror$runTimeMins, "m")) %>% 
+  #change the datatype from chr to numeric and add 60 
+  #since this is a small data set I can clearly see that all are at least an hour long and less than 2 hours
+  mutate(runTimeMins = as.numeric(runTimeMins) + 60) %>%
+  #Lets take a look at this by the decade
+  #created a decade column to group the releases of these movies
+  mutate(Decade = Released %/% 10 * 10 )
+
+
+#This new dataframe will be helpful for our text analysis of our Synopsis later on
+tidyHoror <- horror %>% 
+  #we want to create a row for each word shown in the Synopsis variable
+  unnest_tokens(word, Synopsis) %>% 
+  #Lets remove stop words that will provide little to no importance
+  anti_join(stop_words)
+
+
+```
+
+The following section focuses on summary statistics.
+
+```{r Summary}
+
+horror %>% 
+  summary()
+
+#popularity score is not helpful because of how many do not have one.
+#Many titles do not have a popularity score due to so many B-Horror movies being niche titles
+
+#Let's see the distribution of ratings and the run times (in minutes) for the titles we pulled
+
+horror %>%  
+  ggplot(aes(x = Rating)) +
+  geom_histogram(binwidth = .5)
+
+horror %>%  
+  ggplot(aes(x = Rating)) +
+  geom_density()
+
+horror %>% 
+  ggplot() + 
+  geom_histogram(aes(x = runTimeMins), , binwidth = 5)
+
+horror %>% 
+  ggplot() + 
+  geom_density(aes(x = runTimeMins))
+
+```
+
+I thought it would be interesting to pull directors writers and stars. So we do some basic counts to see if we can identify creative professionals that continuously appear in different titles.
+
+```{r Univatriate Analysis 1 Directors Writers and Stars}
+
+# Most directors only have one film in this list, but a select few have 2 or more.
+
+horror %>% 
+  count(Director) %>%
+  arrange(desc(n))
+
+#How many times do actors appear in these movies? 
+#Most are unique actors in these movies, however, a few show up in 2 titles. 
+
+horror %>% 
+  #Since we have 2 columns of Stars (Star1 and Star2) Let's make this data frame longer to include them all in one column 
+  pivot_longer(Star1:Star2, names_to = "Star", values_to = "Actor") %>% 
+  count(Actor) %>% 
+  arrange(desc(n))
+
+#How many times does a writer appear in this data set? 
+#The most prevalent writer in this data set is Wes Craven, unsurprisingly!
+
+horror %>% 
+  pivot_longer(Writer1:Writer2, names_to = "Writer", values_to = "Names") %>% 
+  #remove some missing values because IMDB does not always specify a second writer, or there is none. 
+  filter(!is.na(Names)) %>% 
+  count(Names) %>% 
+  arrange(desc(n))
+
+```
+
+We focus on single variables again to see the top movies in this data set and how many titles were released per year.
+
+```{r Univatriate Analysis 2 Ratings Releases}
+
+#What are the highest rated movies? 
+
+#Top 10 B-horror movies on IMDB based on IMDB rating
+
+horror %>%
+  arrange(desc(Rating)) %>% 
+  select(Movie, MovieRating, Rating ) %>%
+  head(10)
+
+#How many releases are there by year? 
+
+#The year with the most B-Horror titles released was 1981
+
+horror %>% 
+  count(Released) %>% 
+  arrange(desc(n))
+
+#These are all of the titles released in 1981 from this data
+
+horror %>% 
+  filter(Released == 1981)
+
+#How many releases are there by decade? 
+
+#Most of these B-Horror movies were released in the 80's
+#We see sort of a "resurgence" of these movies in the 2010's
+
+horror %>% 
+  count(Decade) %>% 
+  arrange(desc(n))
+
+#there was an increase in releases from the 1960's peaking in the 1980s
+#Followed by a decline in releases until the 2010s. 
+
+plot_decade <- horror %>% 
+  count(Decade) %>% 
+  arrange(desc(n)) %>% 
+  ggplot(aes(x = Decade, y = n)) + 
+  geom_line(color = "red") +
+  geom_label(aes(x = Decade, y = n, label = n, vjust = .5),) + 
+  theme(text = element_text(family = "Nosifer", color = "white"),
+        panel.background = element_rect(fill = "black"), 
+        panel.grid = element_blank(), 
+        axis.line = element_line(color = "white"), 
+        axis.text.y = (element_text(color = "white")), 
+        axis.text.x = element_text(color = "white")) +
+  labs(y = "Count of Movies", 
+       title = "Number TOP B-Horror Movies by Decade", 
+       subtitle = "From IMDB's 100 most popular B-Horror movies",
+       caption = "Source - imdb.com\nImage-MGM")
+
+ggbackground(plot_decade, "images/poltergeist.jpeg")
+
+
+```
+
+The number of releases around the 1980's is interesting in this data set. Lets dig a little deeper.
+
+```{r Bivariate/Multivariat Analysis 1 - Movie rating over time}
+
+#Have B-Horror movies gotten better, worse,or stayed the same over time? 
+
+ratingPlot <- horror %>%
+  select(Movie, Rating, Released) %>% 
+  ggplot(aes(x = Released, y = Rating)) + 
+  geom_line(color = "white") +
+  geom_hline(aes(yintercept = mean(Rating)), color = "orange4") +
+  theme(text = element_text(family = "Nosifer", color = "red"),
+    axis.text.x = element_text(angle = 45, vjust = .75, hjust = .80, size = 10, color = "white"),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_line(color = "white"),
+    axis.text.y = (element_text(color = "white")),
+    panel.grid = element_blank())+
+  labs(title = "B-Horror Movie Ratings Throughout the Years", 
+       caption = "Data Source - imdb.com\nImage - evil.fandom.com/wiki/Crystal_Lake")
+
+ggbackground(ratingPlot, "images/The_Crystal_Lake.jpeg")
+
+#The late 1960s through the 1980s experienced above average ratings of movies 
+#Afterwards we see a loss in consistency and have a lot of volatility
+
+plot <- horror %>% 
+  arrange(desc(Rating)) %>% 
+  filter(Decade >= 1960, Decade <= 1980) %>% 
+  mutate(Movie = as.factor(Movie)) %>% 
+  mutate(Movie = fct_reorder(Movie, Rating, .fun = sum, .desc = TRUE)) %>% 
+  head(10) %>% 
+  ggplot(aes(x = Movie, y = Rating)) +
+  geom_col(aes(x = Movie, y = Rating), fill = "darkorange",  alpha = .66) +
+ coord_cartesian(ylim=c(6,8.5))+
+  geom_label(aes(x = Movie, y = Rating, label = Released)) + 
+  theme(text = element_text(family = "Nosifer", color = "red"),
+    axis.text.x = element_text(angle = 45, vjust = .75, hjust = .80, size = 6, color = "white"),
+    axis.title.x = element_blank(),
+    axis.text.y = (element_text(color = "white")),
+    plot.background = element_rect(fill = "black"), 
+    panel.grid = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_blank()) +
+  labs(y = "IMDB Ratings", 
+       title = "The Golden Age of B-Horror", 
+       subtitle = "Highest rated B-Horror Movies from the 1960's - 1980's",
+       caption = "Data Source - imdb.com\n Image - evildead.fandom.com/wiki/The_Knowby_Cabin") 
+
+ggbackground(plot, "images/CabinExterior-EvilDead2.jpeg")
+```
+
+Out of curiosity, I wanted to know how run times have changed over time.
+
+```{r Bivariate/Multivariat Analysis 2 - Runtimes over time}
+
+#have movies gotten longer over time? 
+#Movies seem to have gotten longer after the 1960's, but have stayed relatively the same length since the 1980's
+
+
+horror %>% 
+  ggplot(aes(x = Released, y = runTimeMins)) +
+  geom_point() + 
+  geom_smooth()
+
+
+```
+
+The remaining sections area all about text analysis. I haven't tried my hand at text mining / text analysis so we will be digging into the user submitted synopsis for the 100 titles we pulled!
+
+This sections is all about preprocessing using the quanteda package.
+
+```{r TEXT ANALYSIS - PREPROCESSING}
+
+horror
+
+topHorrorList <- horror %>% 
+  arrange(desc(Rating)) %>% 
+  select(Movie) %>% 
+  head(10) %>% 
+  as.vector()
+
+topHorrorList
+
+is.vector(topHorrorList)
+topHorrorList2 <- c("Halloween", "Night of the Living Dead", "The Texas Chain Saw Massacre", 
+                   "The Evil Dead", "Curse of the Demon", "Tremors", "Carnival of Souls", "White Dog", 
+                   "The Blair Witch Project", "The Raven")
+
+is.vector(topHorrorList2)
+
+
+horrorcorp = corpus(horror,text_field = "Synopsis")
+
+dtm <- dfm(tokens(horrorcorp, remove_punct = TRUE, 
+                  remove_symbols = TRUE, 
+                  remove_separators = TRUE, remove_numbers = TRUE), tolower = TRUE) %>%
+  dfm_remove(stopwords('en')) %>% 
+  dfm_trim(min_termfreq = 8) 
+
+dtm
+
+horror2corp = horror %>% 
+  arrange(desc(Rating)) %>% 
+  filter(Decade >= 1960, Decade <= 1980) %>% 
+  corpus(text_field = "Synopsis")
+
+dtm2 <- dfm(tokens(horror2corp, remove_punct = TRUE, 
+                  remove_symbols = TRUE, 
+                  remove_separators = TRUE, remove_numbers = TRUE), tolower = TRUE) %>%
+  dfm_remove(stopwords('en')) %>% 
+  dfm_trim(min_termfreq = 6)
+
+
+horror_dfm <- tidyHoror %>%  
+  filter(Movie %in% topHorrorList2) %>%
+  count(Movie, word, sort = TRUE) %>% 
+  cast_dfm(Movie, word, n)
+  
+
+```
+
+Now let's make a simple word cloud for all of the titles. Also, for movies released during the 1960s and 1980s
+
+```{r TEXT ANALYSIS - ANALYSIS}
+
+dtm %>% 
+  dfm_remove(c('>', '<', 'one', 'ed', 'however', 'goes')) %>%
+  textplot_wordcloud(color = "darkred", ordered_color = T) 
+
+dtm %>% 
+  dfm_remove(c('>', '<', 'one', 'ed', 'however', 'goes')) %>%
+  textstat_frequency(n = 50) 
+
+#Since most of the above average rated movies were between the 1960's and the 1990's I decided to make a wordcloud for this era
+
+dtm2 %>%   
+  dfm_remove(c('>', '<', 'one', 'ed', 'humberto', 'amador', 'norman', 'also')) %>%
+  textplot_wordcloud() 
+```
+
+The focus will now be on the top 10 rated movies in the data set. I want to explore what words carry the most weight in their synopsis This remainder of this analysis was guided/inspired by Julie Siege's topic modeling tutorials.
+
+If you would like to see more of Julie Silge's work you can take a look at her blog here: <https://juliasilge.com/blog/> She is a great data scientist and prevelant figure in the R community!
+
+```{r Text analysis - Topic Modeling}
+
+
+tidyHoror %>% 
+  filter(Movie %in% topHorrorList2) %>% 
+  count(Movie, word, sort = TRUE) %>% 
+  bind_tf_idf(word, Movie, n) %>% 
+  group_by(Movie) %>% 
+  slice_max(word, n = 3) %>% 
+  ungroup() %>% 
+  mutate(word = reorder(word, tf_idf)) %>% 
+  ggplot(aes(word, tf_idf, fill = Movie)) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~Movie, scales = "free") + 
+  coord_flip()
+  
+```
+
+
+```{r Text analysis - Topic Modeling 2}
+
+library(stm)
+
+tidyHorror_dfm <- tidyHoror %>% 
+  count(Movie, word, sort = TRUE) %>% 
+  filter(word !="10") %>% 
+  filter(word !="11944") %>% 
+  filter(word != "_tremors_") %>% 
+  cast_dfm(Movie, word, n)
+
+topic_model <- stm(tidyHorror_dfm, K = 6, init.type = "Spectral")
+summary(topic_model)
+
+```
+
+```{r Text analysis - Topic Modeling 3}
+
+td_beta <- tidy(topic_model)
+
+td_beta %>% 
+  group_by(topic) %>% 
+  slice_max(beta, n = 10) %>% 
+  ungroup() %>% 
+  mutate(term = reorder(term, beta)) %>% 
+  ggplot(aes(term, beta, fill = term)) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~topic, scales = "free") + 
+  coord_flip()
+
+
+td_gamma <- tidy(topic_model, matrix = "gamma", 
+                 document_names = rownames(tidyHorror_dfm))
+
+td_gamma %>% 
+  ggplot(aes(gamma, fill = as.factor(topic))) + 
+           geom_histogram(show.legend = FALSE) + 
+           facet_wrap(~topic, ncol = 3)
+  
+
+```
